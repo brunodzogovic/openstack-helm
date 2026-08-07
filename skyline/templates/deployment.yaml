@@ -48,6 +48,10 @@ spec:
 {{ dict "envAll" $envAll "application" "skyline" | include "helm-toolkit.snippets.kubernetes_pod_security_context" | indent 6 }}
       nodeSelector:
         {{ .Values.labels.skyline.node_selector_key }}: {{ .Values.labels.skyline.node_selector_value }}
+{{- with .Values.pod.affinity.skyline }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
       initContainers:
 {{ tuple $envAll "skyline" $mounts_skyline_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
         - name: api-init
