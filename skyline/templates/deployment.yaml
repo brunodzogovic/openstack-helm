@@ -86,7 +86,7 @@ spec:
           ports:
             - name: api
               containerPort: {{ tuple "skyline" "service" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
-{{ if .Values.pod.probes.enabled }}
+{{ if and (hasKey .Values.pod "probes") .Values.pod.probes.enabled }}
           startupProbe:
 {{ toYaml .Values.pod.probes.nginx.startup | indent 12 }}
           readinessProbe:
@@ -107,7 +107,7 @@ spec:
           command:
             - /tmp/skyline-apiserver.sh
 {{ include "helm-toolkit.snippets.kubernetes_resources" ( tuple $envAll .Values.pod.resources.skyline ) | indent 10 }}
-{{ if .Values.pod.probes.enabled }}
+{{ if and (hasKey .Values.pod "probes") .Values.pod.probes.enabled }}
           startupProbe:
 {{ toYaml .Values.pod.probes.skyline.startup | indent 12 }}
           readinessProbe:
