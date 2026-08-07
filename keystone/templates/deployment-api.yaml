@@ -86,6 +86,9 @@ spec:
           ports:
             - name: ks-pub
               containerPort: {{ tuple "identity" "service" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+{{- if hasKey $envAll.Values.pod.probes.api.api "startup" }}
+{{ dict "envAll" $envAll "component" "api" "container" "api" "type" "startup" "probeTemplate" (include "apiProbeTemplate" $envAll | fromYaml) | include "helm-toolkit.snippets.kubernetes_probe" | trim | indent 10 }}
+{{- end }}
 {{ dict "envAll" $envAll "component" "api" "container" "api" "type" "readiness" "probeTemplate" (include "apiProbeTemplate" $envAll | fromYaml) | include "helm-toolkit.snippets.kubernetes_probe" | trim | indent 10 }}
 {{ dict "envAll" $envAll "component" "api" "container" "api" "type" "liveness" "probeTemplate" (include "apiProbeTemplate" $envAll | fromYaml) | include "helm-toolkit.snippets.kubernetes_probe" | trim | indent 10 }}
           volumeMounts:
