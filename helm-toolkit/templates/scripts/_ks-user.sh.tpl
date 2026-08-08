@@ -62,14 +62,28 @@ USER_PROJECT_ID=$(openstack project create --or-show --enable -f value -c id \
     --description="${USER_PROJECT_DESC}" \
     "${SERVICE_OS_PROJECT_NAME}");
 
-# Manage user
+# Manage user. Supplying the candidate password on initial creation is required
+# when Keystone [security_compliance] password_regex is enabled: Keystone rejects
+# password-less local-user creation before a later `user set --password` can run.
+# Keep xtrace disabled around the command so the service password cannot leak into
+# Kubernetes Job logs. With --or-show, an already-existing user is returned rather
+# than having its password reset; the explicit update below remains authoritative.
 USER_DESC="Service User for ${SERVICE_OS_REGION_NAME}/${SERVICE_OS_USER_DOMAIN_NAME}/${SERVICE_OS_SERVICE_NAME}"
+set +x
 USER_ID=$(openstack user create --or-show --enable -f value -c id \
     --domain="${USER_DOMAIN_ID}" \
     --project-domain="${PROJECT_DOMAIN_ID}" \
     --project="${USER_PROJECT_ID}" \
     --description="${USER_DESC}" \
+    --password="${SERVICE_OS_PASSWORD}" \
     "${SERVICE_OS_USERNAME}");
+create_exit=$?
+set -x
+
+if [[ ${create_exit} -ne 0 ]]; then
+  echo "Failed to create or resolve Keystone user ${SERVICE_OS_USERNAME}" >&2
+  exit "${create_exit}"
+fi
 
 # Manage user password (we do this in a seperate step to ensure the password is updated if required)
 set +x
