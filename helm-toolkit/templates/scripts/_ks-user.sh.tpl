@@ -62,19 +62,65 @@ USER_PROJECT_ID=$(openstack project create --or-show --enable -f value -c id \
     --description="${USER_PROJECT_DESC}" \
     "${SERVICE_OS_PROJECT_NAME}");
 
-# Manage user
+# Manage user. Supplying the candidate password on initial creation is required
+# when Keystone [security_compliance] password_regex is enabled: Keystone rejects
+# password-less local-user creation before a later `user set --password` can run.
+# Keep xtrace disabled around the command so the service password cannot leak into
+# Kubernetes Job logs. With --or-show, an already-existing user is returned rather
+# than having its password reset; the probe/update logic below remains authoritative.
 USER_DESC="Service User for ${SERVICE_OS_REGION_NAME}/${SERVICE_OS_USER_DOMAIN_NAME}/${SERVICE_OS_SERVICE_NAME}"
+set +x
 USER_ID=$(openstack user create --or-show --enable -f value -c id \
     --domain="${USER_DOMAIN_ID}" \
     --project-domain="${PROJECT_DOMAIN_ID}" \
     --project="${USER_PROJECT_ID}" \
     --description="${USER_DESC}" \
+    --password="${SERVICE_OS_PASSWORD}" \
     "${SERVICE_OS_USERNAME}");
+create_exit=$?
+set -x
+if [[ ${create_exit} -ne 0 ]]; then
+  echo "Failed to create or resolve Keystone user ${SERVICE_OS_USERNAME}" >&2
+  exit "${create_exit}"
+fi
 
-# Manage user password (we do this in a seperate step to ensure the password is updated if required)
-set +x
-echo "Setting user password via: openstack user set --password=xxxxxxx ${USER_ID}"
-openstack user set --password="${SERVICE_OS_PASSWORD}" "${USER_ID}"
+# Manage user password in a separate step so the password can be conditionally updated.
+# Keystone invalidates all active tokens for a user on every password update, even if the value
+# is unchanged. To avoid disrupting long-lived service tokens on every reconciliation, we first
+# probe authentication with the candidate password and skip the update if it succeeds.
+# The probe forces password auth and clears any ambient auth-plugin env vars to avoid false positives.
+# NOTE: if Keystone's [security_compliance] lockout_failure_attempts is configured, each failed probe
+# counts as a failed login attempt. During initial deployment or after a password rotation the probe
+# will fail once before the password is applied, so lockout_failure_attempts must be set high enough
+# to tolerate at least one failure per reconciliation cycle.
+probe_user_password () {
+  OS_AUTH_TYPE="password" \
+  OS_USERNAME="${SERVICE_OS_USERNAME}" \
+  OS_PASSWORD="${SERVICE_OS_PASSWORD}" \
+  OS_USER_DOMAIN_NAME="" \
+  OS_USER_DOMAIN_ID="${USER_DOMAIN_ID}" \
+  OS_PROJECT_NAME="" \
+  OS_PROJECT_DOMAIN_NAME="" \
+  OS_PROJECT_ID="" \
+  OS_PROTOCOL="" \
+  OS_IDENTITY_PROVIDER="" \
+  OS_ACCESS_TOKEN="" \
+  openstack token issue > /dev/null
+}
+
+set +ex
+probe_stderr=$(probe_user_password 2>&1)
+probe_exit=$?
+set -e
+if [[ $probe_exit -eq 0 ]]; then
+  echo "Password for ${USER_ID} is already correct, skipping update."
+elif echo "${probe_stderr}" | grep -q "HTTP 401"; then
+  echo "Setting user password via: openstack user set --password=xxxxxxx ${USER_ID}"
+  openstack user set --password="${SERVICE_OS_PASSWORD}" "${USER_ID}"
+else
+  echo "Password probe failed with unexpected error: ${probe_stderr}" >&2
+  exit 1
+fi
 set -x
 
 function ks_assign_user_role () {
