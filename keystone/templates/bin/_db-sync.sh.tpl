@@ -16,19 +16,65 @@ limitations under the License.
 
 set -ex
 
-keystone-manage \
-    --config-file=/etc/keystone/keystone.conf \
-    --config-dir=/etc/keystone/keystone.conf.d \
-    db_sync
+DB_SYNC_MODE={{ default "full" .Values.jobs.db_sync.mode | quote }}
 
-keystone-manage \
-    --config-file=/etc/keystone/keystone.conf \
-    --config-dir=/etc/keystone/keystone.conf.d \
-    bootstrap \
-    --bootstrap-username ${OS_USERNAME} \
-    --bootstrap-password ${OS_PASSWORD} \
-    --bootstrap-project-name ${OS_PROJECT_NAME} \
-    --bootstrap-admin-url ${OS_BOOTSTRAP_ADMIN_URL} \
-    --bootstrap-public-url ${OS_BOOTSTRAP_PUBLIC_URL} \
-    --bootstrap-internal-url ${OS_BOOTSTRAP_INTERNAL_URL} \
-    --bootstrap-region-id ${OS_REGION_NAME}
+case "${DB_SYNC_MODE}" in
+  full)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync
+
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        bootstrap \
+        --bootstrap-username ${OS_USERNAME} \
+        --bootstrap-password ${OS_PASSWORD} \
+        --bootstrap-project-name ${OS_PROJECT_NAME} \
+        --bootstrap-admin-url ${OS_BOOTSTRAP_ADMIN_URL} \
+        --bootstrap-public-url ${OS_BOOTSTRAP_PUBLIC_URL} \
+        --bootstrap-internal-url ${OS_BOOTSTRAP_INTERNAL_URL} \
+        --bootstrap-region-id ${OS_REGION_NAME}
+    ;;
+  expand)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --expand
+    ;;
+  migrate)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --migrate
+    ;;
+  contract)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --contract
+
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        bootstrap \
+        --bootstrap-username ${OS_USERNAME} \
+        --bootstrap-password ${OS_PASSWORD} \
+        --bootstrap-project-name ${OS_PROJECT_NAME} \
+        --bootstrap-admin-url ${OS_BOOTSTRAP_ADMIN_URL} \
+        --bootstrap-public-url ${OS_BOOTSTRAP_PUBLIC_URL} \
+        --bootstrap-internal-url ${OS_BOOTSTRAP_INTERNAL_URL} \
+        --bootstrap-region-id ${OS_REGION_NAME}
+    ;;
+  check)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --check
+    ;;
+  *)
+    echo "Unsupported Keystone db_sync mode: ${DB_SYNC_MODE}" >&2
+    exit 2
+    ;;
+esac
