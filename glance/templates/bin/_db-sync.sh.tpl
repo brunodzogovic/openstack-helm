@@ -16,4 +16,23 @@ limitations under the License.
 
 set -ex
 
-glance-manage db_sync
+MIGRATION_MODE="{{ .Values.jobs.db_sync.mode | default "full" }}"
+
+case "${MIGRATION_MODE}" in
+  full)
+    glance-manage db_sync
+    ;;
+  expand)
+    glance-manage db expand
+    ;;
+  migrate)
+    glance-manage db migrate
+    ;;
+  contract)
+    glance-manage db contract
+    ;;
+  *)
+    echo "Unsupported Glance database migration mode: ${MIGRATION_MODE}" >&2
+    exit 2
+    ;;
+esac
