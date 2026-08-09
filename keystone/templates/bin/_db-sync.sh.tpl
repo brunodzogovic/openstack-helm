@@ -16,12 +16,51 @@ limitations under the License.
 
 set -ex
 
-keystone-manage \
-    --config-file=/etc/keystone/keystone.conf \
-    --config-dir=/etc/keystone/keystone.conf.d \
-    db_sync
+DB_SYNC_MODE={{ default "full" .Values.jobs.db_sync.mode | quote }}
 
-keystone-manage \
-    --config-file=/etc/keystone/keystone.conf \
-    --config-dir=/etc/keystone/keystone.conf.d \
-    bootstrap
+case "${DB_SYNC_MODE}" in
+  full)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync
+
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        bootstrap
+    ;;
+  expand)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --expand
+    ;;
+  migrate)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --migrate
+    ;;
+  contract)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --contract
+
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        bootstrap
+    ;;
+  check)
+    keystone-manage \
+        --config-file=/etc/keystone/keystone.conf \
+        --config-dir=/etc/keystone/keystone.conf.d \
+        db_sync --check
+    ;;
+  *)
+    echo "Unsupported Keystone db_sync mode: ${DB_SYNC_MODE}" >&2
+    exit 2
+    ;;
+esac
