@@ -28,6 +28,10 @@ case "${MIGRATION_MODE}" in
   migrate)
     glance-manage db migrate
     ;;
+  expand-migrate)
+    glance-manage db expand
+    glance-manage db migrate
+    ;;
   contract)
     glance-manage db contract
     ;;
