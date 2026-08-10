@@ -66,6 +66,11 @@
 {{- $_ := tuple "dns" "internal" "api" . | include "helm-toolkit.endpoints.keystone_endpoint_uri_lookup" | set (index .Values.conf.designate "service:api") "api_base_uri" -}}
 {{- end -}}
 
+{{- /* Designate 2025.2+ removed the designate-api-wsgi console script. */ -}}
+{{- /* uWSGI must load the supported Python module directly. */ -}}
+{{- $_ := unset .Values.conf.designate_api_uwsgi.uwsgi "wsgi-file" -}}
+{{- $_ := set .Values.conf.designate_api_uwsgi.uwsgi "module" "designate.wsgi.api:application" -}}
+
 {{- if empty .Values.conf.designate_api_uwsgi.uwsgi.processes -}}
 {{- $_ := set .Values.conf.designate_api_uwsgi.uwsgi "processes" (index .Values.conf.designate "service:api").workers -}}
 {{- end -}}
