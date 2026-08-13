@@ -64,10 +64,10 @@ USER_PROJECT_ID=$(openstack project create --or-show --enable -f value -c id \
 
 # Manage user. Supplying the candidate password on initial creation is required
 # when Keystone [security_compliance] password_regex is enabled: Keystone rejects
-# password-less local-user creation before a later `user set --password` can run.
-# Keep xtrace disabled around the command so the service password cannot leak into
-# Kubernetes Job logs. With --or-show, an already-existing user is returned rather
-# than having its password reset; the explicit update below remains authoritative.
+# password-less local-user creation before a later password update can run.
+# Keep xtrace disabled around password-bearing commands so the service password
+# cannot leak into Kubernetes Job logs. With --or-show, an existing user is
+# returned without changing its password.
 USER_DESC="Service User for ${SERVICE_OS_REGION_NAME}/${SERVICE_OS_USER_DOMAIN_NAME}/${SERVICE_OS_SERVICE_NAME}"
 set +x
 USER_ID=$(openstack user create --or-show --enable -f value -c id \
@@ -84,12 +84,6 @@ if [[ ${create_exit} -ne 0 ]]; then
   echo "Failed to create or resolve Keystone user ${SERVICE_OS_USERNAME}" >&2
   exit "${create_exit}"
 fi
-
-# Manage user password (we do this in a seperate step to ensure the password is updated if required)
-set +x
-echo "Setting user password via: openstack user set --password=xxxxxxx ${USER_ID}"
-openstack user set --password="${SERVICE_OS_PASSWORD}" "${USER_ID}"
-set -x
 
 function ks_assign_user_role () {
   if [[ "$SERVICE_OS_ROLE" == "admin" ]]
@@ -108,15 +102,71 @@ function ks_assign_user_role () {
       "${USER_ROLE_ID}"
 }
 
-# Manage user service role
+# Assign roles before validating the desired service credential. A newly-created
+# user cannot issue a project-scoped token until it has at least one assignment.
 IFS=','
 for SERVICE_OS_ROLE in ${SERVICE_OS_ROLES}; do
   ks_assign_user_role
 done
 
-# Manage user member role
 : ${MEMBER_OS_ROLE:="member"}
 export USER_ROLE_ID=$(openstack role create --or-show -f value -c id \
     "${MEMBER_OS_ROLE}");
 ks_assign_user_role
+
+# Keystone password-history enforcement rejects re-setting the current password.
+# Make this job genuinely idempotent: first authenticate with the desired service
+# credential. If that works, the password is already current and must not be
+# written again. If authentication fails, perform an explicit password rotation
+# and verify the rotated credential before declaring the bootstrap successful.
+set +x
+if OS_USERNAME="${SERVICE_OS_USERNAME}" \
+   OS_PASSWORD="${SERVICE_OS_PASSWORD}" \
+   OS_PROJECT_NAME="${SERVICE_OS_PROJECT_NAME}" \
+   OS_PROJECT_DOMAIN_NAME="${SERVICE_OS_PROJECT_DOMAIN_NAME}" \
+   OS_USER_DOMAIN_NAME="${SERVICE_OS_USER_DOMAIN_NAME}" \
+   OS_REGION_NAME="${SERVICE_OS_REGION_NAME}" \
+   openstack token issue >/dev/null 2>&1; then
+  desired_password_valid=true
+else
+  desired_password_valid=false
+fi
+set -x
+
+if [[ "${desired_password_valid}" == "true" ]]; then
+  echo "Keystone service credential already matches desired state; password update skipped"
+else
+  set +x
+  echo "Desired Keystone service credential does not authenticate; rotating password for ${SERVICE_OS_USERNAME}"
+  if openstack user set --password="${SERVICE_OS_PASSWORD}" "${USER_ID}"; then
+    password_update_exit=0
+  else
+    password_update_exit=$?
+  fi
+  set -x
+
+  if [[ ${password_update_exit} -ne 0 ]]; then
+    echo "Failed to rotate Keystone password for ${SERVICE_OS_USERNAME}" >&2
+    exit "${password_update_exit}"
+  fi
+
+  set +x
+  if OS_USERNAME="${SERVICE_OS_USERNAME}" \
+     OS_PASSWORD="${SERVICE_OS_PASSWORD}" \
+     OS_PROJECT_NAME="${SERVICE_OS_PROJECT_NAME}" \
+     OS_PROJECT_DOMAIN_NAME="${SERVICE_OS_PROJECT_DOMAIN_NAME}" \
+     OS_USER_DOMAIN_NAME="${SERVICE_OS_USER_DOMAIN_NAME}" \
+     OS_REGION_NAME="${SERVICE_OS_REGION_NAME}" \
+     openstack token issue >/dev/null 2>&1; then
+    credential_verify_exit=0
+  else
+    credential_verify_exit=$?
+  fi
+  set -x
+
+  if [[ ${credential_verify_exit} -ne 0 ]]; then
+    echo "Keystone service credential verification failed after password rotation for ${SERVICE_OS_USERNAME}" >&2
+    exit "${credential_verify_exit}"
+  fi
+fi
 {{- end }}
