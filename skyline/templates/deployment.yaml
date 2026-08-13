@@ -87,7 +87,14 @@ spec:
           command:
             - /bin/sh
             - -c
-            - cp /etc/nginx/.skyline/nginx.conf /etc/nginx/nginx.conf && nginx -g 'daemon off;'
+            - >-
+              mkdir -p
+              /tmp/nginx-client-body
+              /tmp/nginx-proxy
+              /tmp/nginx-fastcgi
+              /tmp/nginx-uwsgi
+              /tmp/nginx-scgi &&
+              exec nginx -c /etc/nginx/.skyline/nginx.conf -g 'daemon off;'
 {{ include "helm-toolkit.snippets.kubernetes_resources" ( tuple $envAll .Values.pod.resources.nginx ) | indent 10 }}
           ports:
             - name: api
@@ -105,6 +112,7 @@ spec:
               mountPath: /tmp
             - name: nginx-etc
               mountPath: /etc/nginx/.skyline
+              readOnly: true
             - name: skyline-var-lib
               mountPath: /var/lib/skyline
         - name: skyline
