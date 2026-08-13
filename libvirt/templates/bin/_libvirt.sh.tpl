@@ -43,7 +43,34 @@ rm -f /var/run/libvirtd.pid
 
 if [[ -c /dev/kvm ]]; then
     chmod 660 /dev/kvm
-    chown root:kvm /dev/kvm
+
+    # /dev is mounted from the compute host. The host's kvm group GID is not
+    # guaranteed to match the kvm group baked into this container image. QEMU
+    # is configured to run as group "kvm", so align the container-side numeric
+    # GID with the actual host device owner before libvirtd starts. Do not chown
+    # the host device: udev may recreate /dev/kvm later and restore the host GID.
+    HOST_KVM_GID="$(stat -c '%g' /dev/kvm)"
+    CONTAINER_KVM_GID="$(getent group kvm | cut -d: -f3)"
+
+    if [[ -z "${HOST_KVM_GID}" || -z "${CONTAINER_KVM_GID}" ]]; then
+        echo "ERROR: unable to resolve host or container KVM group GID" 1>&2
+        exit 1
+    fi
+
+    if [[ "${HOST_KVM_GID}" != "${CONTAINER_KVM_GID}" ]]; then
+        if ! command -v groupmod >/dev/null 2>&1; then
+            echo "ERROR: /dev/kvm GID ${HOST_KVM_GID} differs from container kvm GID ${CONTAINER_KVM_GID}, but groupmod is unavailable" 1>&2
+            exit 1
+        fi
+        echo "INFO: aligning container kvm GID ${CONTAINER_KVM_GID} -> host /dev/kvm GID ${HOST_KVM_GID}"
+        groupmod -o -g "${HOST_KVM_GID}" kvm
+    fi
+
+    RESOLVED_KVM_GID="$(getent group kvm | cut -d: -f3)"
+    if [[ "${RESOLVED_KVM_GID}" != "${HOST_KVM_GID}" ]]; then
+        echo "ERROR: container kvm GID ${RESOLVED_KVM_GID} does not match /dev/kvm GID ${HOST_KVM_GID}" 1>&2
+        exit 1
+    fi
 fi
 
 #Setup Cgroups to use when breaking out of Kubernetes defined groups
@@ -143,7 +170,7 @@ EOF
 
   if [ -n "${LIBVIRT_EXTERNAL_CEPH_CINDER_SECRET_UUID}" ] ; then
     EXTERNAL_CEPH_CINDER_KEYRING=$(cat /tmp/external-ceph-client-keyring)
-    create_virsh_libvirt_secret ${EXTERNAL_CEPH_CINDER_USER} ${LIBVIRT_EXTERNAL_CEPH_CINDER_SECRET_UUID} ${EXTERNAL_CEPH_CINDER_KEYRING}
+    create_virsh_libvirt_secret ${LIBVIRT_EXTERNAL_CEPH_CINDER_USER} ${LIBVIRT_EXTERNAL_CEPH_CINDER_SECRET_UUID} ${EXTERNAL_CEPH_CINDER_KEYRING}
   fi
 
   cleanup
