@@ -15,6 +15,9 @@ limitations under the License.
 {{- define "metadata.annotations.job.db_sync" }}
 helm.sh/hook: post-install,post-upgrade
 helm.sh/hook-weight: "-4"
+argocd.argoproj.io/hook: Sync
+argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+argocd.argoproj.io/sync-wave: "-4"
 {{- end }}
 
 {{- $podVolMounts := .Values.pod.mounts.barbican_db_sync.barbican_db_sync.volumeMounts | default list }}
