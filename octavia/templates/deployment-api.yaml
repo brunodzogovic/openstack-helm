@@ -78,22 +78,22 @@ spec:
       initContainers:
 {{- if $ovnProviderBootstrapEnabled }}
         - name: ovn-provider-bootstrap
-{{ tuple $envAll "octavia_api" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll "ovn_provider_bootstrap" | include "helm-toolkit.snippets.image" | indent 10 }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
           command:
-            - /bin/bash
+            - /bin/sh
             - -ec
             - |
-              set -o pipefail
+              rm -rf /opt/ovn-provider/*
               python3 -m pip install \
                 --disable-pip-version-check \
                 --no-cache-dir \
                 --target /opt/ovn-provider \
                 --constraint "{{ $ovnProviderConstraints }}" \
                 "ovn-octavia-provider=={{ $ovnProviderVersion }}"
-              PYTHONPATH=/opt/ovn-provider python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='octavia.api.drivers')]; assert 'ovn' in eps, f'OVN provider entry point missing: {eps}'; import ovn_octavia_provider; print('ovn-octavia-provider {{ $ovnProviderVersion }} ready')"
+              PYTHONPATH=/opt/ovn-provider python3 -c "import importlib.metadata as m; api_eps=[ep.name for ep in m.entry_points(group='octavia.api.drivers')]; agent_eps=[ep.name for ep in m.entry_points(group='octavia.driver_agent.provider_agents')]; assert 'ovn' in api_eps, f'OVN API driver entry point missing: {api_eps}'; assert 'ovn' in agent_eps, f'OVN provider-agent entry point missing: {agent_eps}'; import ovn_octavia_provider; print('ovn-octavia-provider {{ $ovnProviderVersion }} ready')"
           volumeMounts:
             - name: ovn-provider-python
               mountPath: /opt/ovn-provider
