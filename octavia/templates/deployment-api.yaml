@@ -34,6 +34,10 @@ httpGet:
 
 {{- $mounts_octavia_api := .Values.pod.mounts.octavia_api.octavia_api }}
 {{- $mounts_octavia_api_init := .Values.pod.mounts.octavia_api.init_container }}
+{{- $ovnProviderBootstrap := default (dict) .Values.conf.ovn_provider_bootstrap }}
+{{- $ovnProviderBootstrapEnabled := default false (get $ovnProviderBootstrap "enabled") }}
+{{- $ovnProviderVersion := default "10.0.0" (get $ovnProviderBootstrap "version") }}
+{{- $ovnProviderConstraints := default "https://raw.githubusercontent.com/openstack/requirements/stable/2026.1/upper-constraints.txt" (get $ovnProviderBootstrap "constraints_url") }}
 
 {{- $serviceAccountName := "octavia-api" }}
 {{ tuple $envAll "api" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
@@ -72,12 +76,39 @@ spec:
         {{ .Values.labels.api.node_selector_key }}: {{ .Values.labels.api.node_selector_value }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.api.timeout | default "30" }}
       initContainers:
+{{- if $ovnProviderBootstrapEnabled }}
+        - name: ovn-provider-bootstrap
+{{ tuple $envAll "octavia_api" | include "helm-toolkit.snippets.image" | indent 10 }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -o pipefail
+              python3 -m pip install \
+                --disable-pip-version-check \
+                --no-cache-dir \
+                --target /opt/ovn-provider \
+                --constraint "{{ $ovnProviderConstraints }}" \
+                "ovn-octavia-provider=={{ $ovnProviderVersion }}"
+              PYTHONPATH=/opt/ovn-provider python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='octavia.api.drivers')]; assert 'ovn' in eps, f'OVN provider entry point missing: {eps}'; import ovn_octavia_provider; print('ovn-octavia-provider {{ $ovnProviderVersion }} ready')"
+          volumeMounts:
+            - name: ovn-provider-python
+              mountPath: /opt/ovn-provider
+{{- end }}
 {{ tuple $envAll "api" $mounts_octavia_api_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: octavia-api
 {{ tuple $envAll "octavia_api" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.api | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
 {{ dict "envAll" $envAll "application" "octavia_api" "container" "octavia_api" | include "helm-toolkit.snippets.kubernetes_container_security_context" | indent 10 }}
+{{- if $ovnProviderBootstrapEnabled }}
+          env:
+            - name: PYTHONPATH
+              value: /opt/ovn-provider
+{{- end }}
           command:
             - /tmp/octavia-api.sh
             - start
@@ -116,6 +147,11 @@ spec:
               mountPath: /etc/octavia/policy.yaml
               subPath: policy.yaml
               readOnly: true
+{{- if $ovnProviderBootstrapEnabled }}
+            - name: ovn-provider-python
+              mountPath: /opt/ovn-provider
+              readOnly: true
+{{- end }}
             {{- if .Values.conf.octavia.DEFAULT.log_config_append }}
             - name: octavia-etc
               mountPath: {{ .Values.conf.octavia.DEFAULT.log_config_append }}
@@ -128,6 +164,10 @@ spec:
           emptyDir: {}
         - name: pod-etc-octavia
           emptyDir: {}
+{{- if $ovnProviderBootstrapEnabled }}
+        - name: ovn-provider-python
+          emptyDir: {}
+{{- end }}
         - name: octavia-bin
           configMap:
             name: octavia-bin
