@@ -17,6 +17,9 @@ limitations under the License.
 
 {{- $mounts_magnum_api := .Values.pod.mounts.magnum_api.magnum_api }}
 {{- $mounts_magnum_api_init := .Values.pod.mounts.magnum_api.init_container }}
+{{- $capiBootstrap := default (dict) .Values.conf.capi_driver_bootstrap }}
+{{- $capiBootstrapEnabled := default false (get $capiBootstrap "enabled") }}
+{{- $capiDriverVersion := default "1.4.0" (get $capiBootstrap "version") }}
 
 {{- $serviceAccountName := "magnum-api" }}
 {{ tuple $envAll "api" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
@@ -54,6 +57,28 @@ spec:
         {{ .Values.labels.api.node_selector_key }}: {{ .Values.labels.api.node_selector_value }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.api.timeout | default "30" }}
       initContainers:
+{{- if $capiBootstrapEnabled }}
+        - name: capi-driver-bootstrap
+{{ tuple $envAll "capi_driver_bootstrap" | include "helm-toolkit.snippets.image" | indent 10 }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              rm -rf /opt/magnum-capi/*
+              python3 -m pip install \
+                --disable-pip-version-check \
+                --no-cache-dir \
+                --no-deps \
+                --target /opt/magnum-capi \
+                "magnum-capi-helm=={{ $capiDriverVersion }}"
+              PYTHONPATH=/opt/magnum-capi python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='magnum.drivers')]; assert 'k8s_capi_helm_v1' in eps, f'CAPI Helm driver entry point missing: {eps}'; import magnum_capi_helm; print('magnum-capi-helm {{ $capiDriverVersion }} ready')"
+          volumeMounts:
+            - name: magnum-capi-python
+              mountPath: /opt/magnum-capi
+{{- end }}
 {{ tuple $envAll "api" $mounts_magnum_api_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: magnum-api
@@ -61,6 +86,11 @@ spec:
 {{ tuple $envAll $envAll.Values.pod.resources.api | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             runAsUser: {{ .Values.pod.user.magnum.uid }}
+{{- if $capiBootstrapEnabled }}
+          env:
+            - name: PYTHONPATH
+              value: /opt/magnum-capi
+{{- end }}
           command:
             - /tmp/magnum-api.sh
             - start
@@ -121,6 +151,11 @@ spec:
               subPath: kubeconfig.conf
               readOnly: true
             {{- end }}
+{{- if $capiBootstrapEnabled }}
+            - name: magnum-capi-python
+              mountPath: /opt/magnum-capi
+              readOnly: true
+{{- end }}
 {{ if $mounts_magnum_api.volumeMounts }}{{ toYaml $mounts_magnum_api.volumeMounts | indent 12 }}{{ end }}
       volumes:
         - name: pod-tmp
@@ -131,6 +166,10 @@ spec:
           emptyDir: {}
         - name: pod-var-cache-magnum
           emptyDir: {}
+{{- if $capiBootstrapEnabled }}
+        - name: magnum-capi-python
+          emptyDir: {}
+{{- end }}
         - name: magnum-bin
           configMap:
             name: magnum-bin
