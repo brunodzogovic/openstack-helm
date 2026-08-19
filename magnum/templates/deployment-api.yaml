@@ -74,7 +74,7 @@ spec:
                 --no-deps \
                 --target /opt/magnum-capi \
                 "magnum-capi-helm=={{ $capiDriverVersion }}"
-              PYTHONPATH=/opt/magnum-capi python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='magnum.drivers')]; assert 'k8s_capi_helm_v1' in eps, f'CAPI Helm driver entry point missing: {eps}'; import magnum_capi_helm; print('magnum-capi-helm {{ $capiDriverVersion }} ready')"
+              PYTHONPATH=/opt/magnum-capi python3 -c "import importlib.metadata as m; eps={ep.name: ep for ep in m.entry_points(group='magnum.drivers')}; assert 'k8s_capi_helm_v1' in eps, f'CAPI Helm driver entry point missing: {list(eps)}'; eps['k8s_capi_helm_v1'].load(); print('magnum-capi-helm {{ $capiDriverVersion }} driver loaded successfully')"
           volumeMounts:
             - name: magnum-capi-python
               mountPath: /opt/magnum-capi
