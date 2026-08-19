@@ -24,6 +24,10 @@ limitations under the License.
 
 {{- $mounts_octavia_driver_agent := .Values.pod.mounts.octavia_driver_agent.octavia_driver_agent }}
 {{- $mounts_octavia_driver_agent_init := .Values.pod.mounts.octavia_driver_agent.init_container }}
+{{- $ovnProviderBootstrap := default (dict) .Values.conf.ovn_provider_bootstrap }}
+{{- $ovnProviderBootstrapEnabled := default false (get $ovnProviderBootstrap "enabled") }}
+{{- $ovnProviderVersion := default "10.0.0" (get $ovnProviderBootstrap "version") }}
+{{- $ovnProviderConstraints := default "https://raw.githubusercontent.com/openstack/requirements/stable/2026.1/upper-constraints.txt" (get $ovnProviderBootstrap "constraints_url") }}
 
 {{- $serviceAccountName := "octavia-driver-agent" }}
 {{ tuple $envAll "driver_agent" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
@@ -61,12 +65,39 @@ spec:
       nodeSelector:
         {{ .Values.labels.driver_agent.node_selector_key }}: {{ .Values.labels.driver_agent.node_selector_value }}
       initContainers:
+{{- if $ovnProviderBootstrapEnabled }}
+        - name: ovn-provider-bootstrap
+{{ tuple $envAll "octavia_driver_agent" | include "helm-toolkit.snippets.image" | indent 10 }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -o pipefail
+              python3 -m pip install \
+                --disable-pip-version-check \
+                --no-cache-dir \
+                --target /opt/ovn-provider \
+                --constraint "{{ $ovnProviderConstraints }}" \
+                "ovn-octavia-provider=={{ $ovnProviderVersion }}"
+              PYTHONPATH=/opt/ovn-provider python3 -c "import importlib.metadata as m; api_eps=[ep.name for ep in m.entry_points(group='octavia.api.drivers')]; agent_eps=[ep.name for ep in m.entry_points(group='octavia.driver_agent.provider_agents')]; assert 'ovn' in api_eps, f'OVN API driver entry point missing: {api_eps}'; assert 'ovn' in agent_eps, f'OVN provider-agent entry point missing: {agent_eps}'; import ovn_octavia_provider; print('ovn-octavia-provider {{ $ovnProviderVersion }} ready')"
+          volumeMounts:
+            - name: ovn-provider-python
+              mountPath: /opt/ovn-provider
+{{- end }}
 {{ tuple $envAll "driver_agent" $mounts_octavia_driver_agent_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: octavia-driver-agent
 {{ tuple $envAll "octavia_driver_agent" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.driver_agent | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
 {{ dict "envAll" $envAll "application" "octavia_driver_agent" "container" "octavia_driver_agent" | include "helm-toolkit.snippets.kubernetes_container_security_context" | indent 10 }}
+{{- if $ovnProviderBootstrapEnabled }}
+          env:
+            - name: PYTHONPATH
+              value: /opt/ovn-provider
+{{- end }}
           command:
             - /tmp/octavia-driver-agent.sh
             - start
@@ -94,6 +125,11 @@ spec:
             - name: octavia-etc-snippets
               mountPath: /etc/octavia/octavia.conf.d/
               readOnly: true
+{{- if $ovnProviderBootstrapEnabled }}
+            - name: ovn-provider-python
+              mountPath: /opt/ovn-provider
+              readOnly: true
+{{- end }}
             {{- if .Values.conf.octavia.DEFAULT.log_config_append }}
             - name: octavia-etc
               mountPath: {{ .Values.conf.octavia.DEFAULT.log_config_append }}
@@ -112,6 +148,10 @@ spec:
           emptyDir: {}
         - name: pod-etc-octavia
           emptyDir: {}
+{{- if $ovnProviderBootstrapEnabled }}
+        - name: ovn-provider-python
+          emptyDir: {}
+{{- end }}
         - name: run-openvswitch
           hostPath:
             path: /run/openvswitch
