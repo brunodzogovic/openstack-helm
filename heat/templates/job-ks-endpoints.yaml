@@ -13,11 +13,7 @@ limitations under the License.
 */}}
 
 {{- define "metadata.annotations.job.ks_endpoints" }}
-helm.sh/hook: post-install,post-upgrade
-helm.sh/hook-weight: "-2"
-argocd.argoproj.io/hook: Sync
-argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-argocd.argoproj.io/sync-wave: "-5"
+{}
 {{- end }}
 
 {{- if .Values.manifests.job_ks_endpoints }}
