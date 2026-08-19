@@ -13,10 +13,7 @@ limitations under the License.
 */}}
 
 {{- define "metadata.annotations.job.bootstrap" }}
-helm.sh/hook: post-install,post-upgrade
-argocd.argoproj.io/hook: Sync
-argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-argocd.argoproj.io/sync-wave: "-1"
+{}
 {{- end }}
 
 {{- if and .Values.manifests.job_bootstrap .Values.bootstrap.enabled }}
