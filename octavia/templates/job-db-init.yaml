@@ -14,17 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
-{{- define "metadata.annotations.job.db_init" }}
-helm.sh/hook: post-install,post-upgrade
-helm.sh/hook-weight: "-5"
-{{- end }}
-
 {{- if .Values.manifests.job_db_init }}
 {{- $serviceName := "octavia" -}}
 {{- $dbSvc := dict "adminSecret" .Values.secrets.oslo_db.admin "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "logConfigFile" (printf "/etc/%s/logging.conf" $serviceName ) "configDbSection" "database" "configDbKey" "connection" -}}
 {{- $dbPersist := dict "adminSecret" .Values.secrets.oslo_db.admin "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "logConfigFile" (printf "/etc/%s/logging.conf" $serviceName ) "configDbSection" "task_flow" "configDbKey" "persistence_connection" -}}
 {{- $dbsToInit := list $dbSvc $dbPersist }}
 {{- $dbInitJob := dict "envAll" . "serviceName" $serviceName "dbsToInit" $dbsToInit -}}
-{{- $_ := set $dbInitJob "jobAnnotations" (include "metadata.annotations.job.db_init" . | fromYaml) }}
 {{ $dbInitJob | include "helm-toolkit.manifests.job_db_init_mysql" }}
 {{- end }}
