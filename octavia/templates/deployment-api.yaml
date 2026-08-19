@@ -99,7 +99,7 @@ spec:
             - name: ovn-provider-python
               mountPath: /opt/ovn-provider
 {{- end }}
-{{ tuple $envAll "api" $mounts_octavia_api_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
+{{ tuple $envAll "api_colocated" $mounts_octavia_api_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: octavia-api
 {{ tuple $envAll "octavia_api" | include "helm-toolkit.snippets.image" | indent 10 }}
