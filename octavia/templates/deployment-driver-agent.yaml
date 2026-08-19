@@ -67,15 +67,15 @@ spec:
       initContainers:
 {{- if $ovnProviderBootstrapEnabled }}
         - name: ovn-provider-bootstrap
-{{ tuple $envAll "octavia_driver_agent" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll "ovn_provider_bootstrap" | include "helm-toolkit.snippets.image" | indent 10 }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
           command:
-            - /bin/bash
+            - /bin/sh
             - -ec
             - |
-              set -o pipefail
+              rm -rf /opt/ovn-provider/*
               python3 -m pip install \
                 --disable-pip-version-check \
                 --no-cache-dir \
