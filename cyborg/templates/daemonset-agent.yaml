@@ -87,9 +87,10 @@ spec:
               [agent]
               resource_provider_name = ${NODE_NAME}
               EOF
-              exec cyborg-agent \
-                --config-file /tmp/cyborg-runtime.conf \
-                --log-config-append /tmp/logging-cyborg.conf
+              # The Cyborg chart does not render a standalone oslo.log config
+              # file. Let oslo.log use the logging options in cyborg.conf rather
+              # than pointing --log-config-append at a nonexistent /tmp file.
+              exec cyborg-agent --config-file /tmp/cyborg-runtime.conf
           volumeMounts:
             - name: pod-tmp
               mountPath: /tmp
