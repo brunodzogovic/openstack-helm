@@ -12,7 +12,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
+{{- define "metadata.annotations.job.ks_user" }}
+argocd.argoproj.io/hook: Sync
+argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+argocd.argoproj.io/sync-wave: "0"
+{{- end }}
+
 {{- if .Values.manifests.job_ks_user }}
-{{- $ksUserJob := dict "envAll" . "serviceName" "cyborg" -}}
+{{- $ksUserJob := dict "envAll" . "serviceName" "cyborg" "jobAnnotations" (include "metadata.annotations.job.ks_user" . | fromYaml) -}}
 {{ $ksUserJob | include "helm-toolkit.manifests.job_ks_user" }}
 {{- end }}
