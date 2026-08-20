@@ -12,19 +12,127 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
-{{- define "metadata.annotations.job.rabbit_init" }}
-helm.sh/hook: post-install,post-upgrade
-helm.sh/hook-weight: "-5"
-{{- end }}
-
 {{- if .Values.manifests.job_rabbit_init }}
-{{- $rabbitInitJob := dict "envAll" . "serviceName" "trove" -}}
-{{- if .Values.tls.oslo_messaging -}}
-{{- $_ := set $rabbitInitJob "tlsSecret" .Values.secrets.tls.client.trove -}}
-{{- end -}}
-{{- $_ := set $rabbitInitJob "jobAnnotations" (include "metadata.annotations.job.rabbit_init" . | fromYaml) }}
-{{- if .Values.pod.tolerations.trove.enabled -}}
-{{- $_ := set $rabbitInitJob "tolerationsEnabled" true -}}
-{{- end -}}
-{{ $rabbitInitJob | include "helm-toolkit.manifests.job_rabbit_init" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trove-rabbit-init
+  annotations:
+    # Keep the successful Job until the next sync because Trove's dependency
+    # init containers explicitly wait for this Job by name. BeforeHookCreation
+    # still makes credential reconciliation deterministic on every rollout.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        application: trove
+        component: rabbit-init
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        {{ .Values.labels.job.node_selector_key }}: {{ .Values.labels.job.node_selector_value | quote }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 42424
+        runAsGroup: 42424
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rabbit-init
+          image: {{ .Values.images.tags.trove_db_sync | quote }}
+          imagePullPolicy: {{ .Values.images.pull_policy | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            # RabbitMQ is the authority for its administrator identity. Eclipse
+            # publishes that credential into the OpenStack namespace and Trove
+            # consumes it rather than maintaining a second admin password.
+            - name: RABBITMQ_ADMIN_CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  name: openstack-rabbitmq-admin
+                  key: RABBITMQ_CONNECTION
+            - name: RABBITMQ_SERVICE_CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.oslo_messaging.trove }}
+                  key: RABBITMQ_CONNECTION
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              python3 - <<'PY'
+              import base64
+              import json
+              import os
+              import urllib.error
+              import urllib.parse
+              import urllib.request
+
+              admin = urllib.parse.urlsplit(os.environ['RABBITMQ_ADMIN_CONNECTION'])
+              service = urllib.parse.urlsplit(os.environ['RABBITMQ_SERVICE_CONNECTION'])
+
+              admin_user = urllib.parse.unquote(admin.username or '')
+              admin_password = urllib.parse.unquote(admin.password or '')
+              service_user = urllib.parse.unquote(service.username or '')
+              service_password = urllib.parse.unquote(service.password or '')
+              vhost = urllib.parse.unquote(service.path.lstrip('/')) or '/'
+
+              if not all((admin.hostname, admin_user, admin_password,
+                          service_user, service_password)):
+                  raise SystemExit('RabbitMQ bootstrap URI is incomplete')
+
+              scheme = admin.scheme if admin.scheme in ('http', 'https') else 'http'
+              port = admin.port or (443 if scheme == 'https' else 15672)
+              base = f'{scheme}://{admin.hostname}:{port}/api'
+              authorization = 'Basic ' + base64.b64encode(
+                  f'{admin_user}:{admin_password}'.encode()).decode()
+
+              def put(path, payload):
+                  data = json.dumps(payload).encode()
+                  request = urllib.request.Request(
+                      base + path,
+                      data=data,
+                      method='PUT',
+                      headers={
+                          'Authorization': authorization,
+                          'Content-Type': 'application/json',
+                      },
+                  )
+                  try:
+                      with urllib.request.urlopen(request, timeout=15) as response:
+                          if response.status not in (201, 204):
+                              raise RuntimeError(
+                                  f'RabbitMQ API returned HTTP {response.status} for {path}')
+                  except urllib.error.HTTPError as exc:
+                      raise RuntimeError(
+                          f'RabbitMQ API returned HTTP {exc.code} for {path}') from exc
+
+              encoded_vhost = urllib.parse.quote(vhost, safe='')
+              encoded_user = urllib.parse.quote(service_user, safe='')
+              put(f'/vhosts/{encoded_vhost}', {})
+              put(f'/users/{encoded_user}', {
+                  'password': service_password,
+                  'tags': '',
+              })
+              put(f'/permissions/{encoded_vhost}/{encoded_user}', {
+                  'configure': '.*',
+                  'write': '.*',
+                  'read': '.*',
+              })
+              print('Trove RabbitMQ service credential reconciliation succeeded')
+              PY
 {{- end }}
