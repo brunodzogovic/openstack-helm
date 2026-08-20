@@ -69,13 +69,40 @@ spec:
             - -ec
             - |
               rm -rf /opt/magnum-capi-driver/*
+              # Keep the 2026.1 Magnum runtime and its constrained libraries
+              # authoritative. Only stage the external driver package itself.
               python3 -m pip install \
                 --disable-pip-version-check \
                 --no-cache-dir \
+                --no-deps \
                 --target /opt/magnum-capi-driver \
                 --constraint "{{ $capiConstraints }}" \
                 "magnum-capi-helm=={{ $capiDriverVersion }}"
-              PYTHONPATH=/opt/magnum-capi-driver python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='magnum.drivers')]; assert any('capi' in ep and 'helm' in ep for ep in eps), f'CAPI Helm Magnum driver entry point missing: {eps}'; print('magnum-capi-helm {{ $capiDriverVersion }} ready:', eps)"
+              # magnum-capi-helm 1.4.0 understands literal bearer tokens but
+              # not kubeconfig tokenFile. Eclipse uses projected SA tokens so
+              # the token remains short-lived and is rotated by Kubernetes.
+              # Teach the staged driver to read tokenFile initially and before
+              # every management-cluster request. Fail closed if upstream source
+              # no longer matches the audited 1.4.0 layout.
+              python3 - <<'PY'
+              from pathlib import Path
+
+              path = Path('/opt/magnum-capi-driver/magnum_capi_helm/kubernetes.py')
+              text = path.read_text()
+              marker = 'ECLIPSE_PROJECTED_TOKEN_FILE'
+              if marker not in text:
+                  old_auth = '''        elif user.get("token"):\n            self.headers.update({"Authorization": f"Bearer {user['token']}"})\n        else:\n'''
+                  new_auth = '''        elif user.get("tokenFile"):\n            # ECLIPSE_PROJECTED_TOKEN_FILE: support rotating projected SA tokens.\n            self._token_file = user["tokenFile"]\n            token = pathlib.Path(self._token_file).read_text().strip()\n            self.headers.update({"Authorization": f"Bearer {token}"})\n        elif user.get("token"):\n            self.headers.update({"Authorization": f"Bearer {user['token']}"})\n        else:\n'''
+                  old_request = '''    def request(self, method, url, *args, **kwargs):\n        # Make sure to add the server to any relative URLs\n'''
+                  new_request = '''    def request(self, method, url, *args, **kwargs):\n        token_file = getattr(self, "_token_file", None)\n        if token_file:\n            token = pathlib.Path(token_file).read_text().strip()\n            self.headers.update({"Authorization": f"Bearer {token}"})\n        # Make sure to add the server to any relative URLs\n'''
+                  if text.count(old_auth) != 1 or text.count(old_request) != 1:
+                      raise SystemExit('magnum-capi-helm 1.4.0 token patch source contract changed')
+                  text = text.replace(old_auth, new_auth, 1).replace(old_request, new_request, 1)
+                  path.write_text(text)
+              if marker not in path.read_text():
+                  raise SystemExit('projected tokenFile compatibility patch not installed')
+              PY
+              PYTHONPATH=/opt/magnum-capi-driver python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='magnum.drivers')]; assert 'k8s_capi_helm_v1' in eps, f'CAPI Helm Magnum driver entry point missing: {eps}'; print('magnum-capi-helm {{ $capiDriverVersion }} ready:', eps)"
           volumeMounts:
             - name: magnum-capi-driver
               mountPath: /opt/magnum-capi-driver
