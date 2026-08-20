@@ -19,12 +19,12 @@ kind: Job
 metadata:
   name: trove-rabbit-init
   annotations:
-    # Keep the successful Job until the next sync because Trove's dependency
-    # init containers explicitly wait for this Job by name. BeforeHookCreation
-    # still makes credential reconciliation deterministic on every rollout.
+    # Reconcile the broker-owned vhost/user on every manual Argo sync, but keep
+    # the hook in the same wave as Trove's ordinary Secrets/ConfigMaps/RBAC so
+    # its service credential exists before the pod is started. Dependency init
+    # containers preserve service-level ordering after creation.
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    argocd.argoproj.io/sync-wave: "-5"
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 600
