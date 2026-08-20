@@ -21,6 +21,7 @@ limitations under the License.
 
 {{- $mounts_cyborg := .Values.pod.mounts.cyborg_agent.cyborg_agent }}
 {{- $mounts_cyborg_agent_init := .Values.pod.mounts.cyborg_agent.init_container }}
+{{- $agentPodConfig := default (dict) .Values.pod.agent }}
 
 ---
 apiVersion: apps/v1
@@ -67,25 +68,32 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: status.hostIP
-            # A DaemonSet pod's own hostname is its generated pod name, not the
-            # compute hostname registered by nova-compute in Placement. Cyborg
-            # 2026.1 resolves its parent resource provider by host/name, so use
-            # the authoritative Kubernetes node name for both values.
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: spec.nodeName
+            # Nova/libvirt normally names the root Placement resource provider
+            # with the compute host FQDN, while Kubernetes spec.nodeName is often
+            # the short hostname. Keep RPC identity on the node name and derive
+            # the Placement identity independently, matching Cyborg 2026.1's
+            # resource_provider_name contract and Bug 2139369 fix.
+            - name: RESOURCE_PROVIDER_DOMAIN
+              value: {{ default "" $agentPodConfig.resource_provider_domain | quote }}
           command:
             - /bin/bash
             - -ec
             - |
               cp /etc/cyborg/cyborg.conf /tmp/cyborg-runtime.conf
+              resource_provider_name="${NODE_NAME}"
+              if [[ -n "${RESOURCE_PROVIDER_DOMAIN}" ]]; then
+                resource_provider_name="${NODE_NAME}.${RESOURCE_PROVIDER_DOMAIN}"
+              fi
               cat >> /tmp/cyborg-runtime.conf <<EOF
               [DEFAULT]
               host = ${NODE_NAME}
               [agent]
-              resource_provider_name = ${NODE_NAME}
+              resource_provider_name = ${resource_provider_name}
               EOF
               # The Cyborg chart does not render a standalone oslo.log config
               # file. Let oslo.log use the logging options in cyborg.conf rather
