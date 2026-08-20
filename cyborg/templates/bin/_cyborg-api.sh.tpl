@@ -17,11 +17,14 @@ limitations under the License.
 set -ex
 COMMAND="${@:-start}"
 
-
 function start () {
-  exec cyborg-api \
-        --config-file /etc/cyborg/cyborg.conf \
-        ${OPTIONS}
+  # Cyborg 2026.1 runs oslo.service with the native threading backend. The
+  # legacy `cyborg-api` executable instantiates oslo.service.wsgi.Server and is
+  # intentionally rejected by oslo.service. Use the supported module-based
+  # WSGI application behind uWSGI instead.
+  exec uwsgi \
+    --ini /etc/cyborg/cyborg-api-uwsgi.ini \
+    --pyargv "--config-file /etc/cyborg/cyborg.conf ${OPTIONS:-}"
 }
 
 function stop () {
