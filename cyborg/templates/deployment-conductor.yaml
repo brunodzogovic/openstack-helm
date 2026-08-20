@@ -69,8 +69,6 @@ spec:
             - cyborg-conductor
             - --config-file
             - /etc/cyborg/cyborg.conf
-            - --log-config-append
-            - /tmp/logging-cyborg.conf
           volumeMounts:
             - name: pod-tmp
               mountPath: /tmp
