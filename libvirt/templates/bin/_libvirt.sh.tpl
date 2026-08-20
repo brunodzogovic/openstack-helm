@@ -41,9 +41,34 @@ fi
 
 rm -f /var/run/libvirtd.pid
 
+# /dev is host-mounted into the libvirt pod, so the group owner of /dev/kvm is
+# the host's numeric GID. Linux authorization is numeric, not name based. Do not
+# chown the device from the container because that mutates the host and is lost
+# whenever udev recreates /dev/kvm. Instead, align the container's kvm group to
+# the host-owned device GID before libvirtd/QEMU start.
 if [[ -c /dev/kvm ]]; then
-    chmod 660 /dev/kvm
-    chown root:kvm /dev/kvm
+    HOST_KVM_GID="$(stat -c '%g' /dev/kvm)"
+    CONTAINER_KVM_GID="$(getent group kvm | cut -d: -f3 || true)"
+
+    if [[ -z "${CONTAINER_KVM_GID}" ]]; then
+        echo "ERROR: kvm group is missing inside the libvirt image" 1>&2
+        exit 1
+    fi
+
+    if [[ "${CONTAINER_KVM_GID}" != "${HOST_KVM_GID}" ]]; then
+        if ! command -v groupmod >/dev/null 2>&1; then
+            echo "ERROR: groupmod is required to align the container kvm GID" 1>&2
+            exit 1
+        fi
+        echo "INFO: Remapping container kvm group GID ${CONTAINER_KVM_GID} -> ${HOST_KVM_GID} to match host /dev/kvm"
+        groupmod -o -g "${HOST_KVM_GID}" kvm
+    fi
+
+    EFFECTIVE_KVM_GID="$(getent group kvm | cut -d: -f3)"
+    if [[ "${EFFECTIVE_KVM_GID}" != "${HOST_KVM_GID}" ]]; then
+        echo "ERROR: container kvm GID ${EFFECTIVE_KVM_GID} does not match /dev/kvm GID ${HOST_KVM_GID}" 1>&2
+        exit 1
+    fi
 fi
 
 #Setup Cgroups to use when breaking out of Kubernetes defined groups
