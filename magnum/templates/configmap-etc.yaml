@@ -72,7 +72,8 @@ limitations under the License.
 {{- end -}}
 
 {{- if empty .Values.conf.magnum_api_uwsgi.uwsgi.processes -}}
-{{- $_ := set .Values.conf.magnum_api_uwsgi.uwsgi "processes" .Values.conf.magnum.api.workers -}}
+{{- $apiWorkers := default 2 .Values.conf.magnum.api.workers -}}
+{{- $_ := set .Values.conf.magnum_api_uwsgi.uwsgi "processes" $apiWorkers -}}
 {{- end -}}
 {{- if empty (index .Values.conf.magnum_api_uwsgi.uwsgi "http-socket") -}}
 {{- $http_socket_port := tuple "container-infra" "service" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" | toString }}
