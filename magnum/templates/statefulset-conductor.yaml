@@ -17,6 +17,12 @@ limitations under the License.
 
 {{- $mounts_magnum_conductor := .Values.pod.mounts.magnum_conductor.magnum_conductor }}
 {{- $mounts_magnum_conductor_init := .Values.pod.mounts.magnum_conductor.init_container }}
+{{- $capiBootstrap := default (dict) .Values.conf.capi_driver_bootstrap }}
+{{- $capiBootstrapEnabled := default false (get $capiBootstrap "enabled") }}
+{{- $capiDriverVersion := default "1.4.0" (get $capiBootstrap "version") }}
+{{- $capiConstraints := default "https://raw.githubusercontent.com/openstack/requirements/stable/2026.1/upper-constraints.txt" (get $capiBootstrap "constraints_url") }}
+{{- $helmVersion := default "3.20.0" (get $capiBootstrap "helm_version") }}
+{{- $helmSha := get $capiBootstrap "helm_linux_amd64_sha256" }}
 
 {{- $serviceAccountName := "magnum-conductor" }}
 {{ tuple $envAll "conductor" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
@@ -53,6 +59,50 @@ spec:
       nodeSelector:
         {{ .Values.labels.conductor.node_selector_key }}: {{ .Values.labels.conductor.node_selector_value }}
       initContainers:
+{{- if $capiBootstrapEnabled }}
+        - name: capi-driver-bootstrap
+{{ tuple $envAll "capi_driver_bootstrap" | include "helm-toolkit.snippets.image" | indent 10 }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              rm -rf /opt/magnum-capi-driver/* /opt/helm/bin/*
+              python3 -m pip install \
+                --disable-pip-version-check \
+                --no-cache-dir \
+                --target /opt/magnum-capi-driver \
+                --constraint "{{ $capiConstraints }}" \
+                "magnum-capi-helm=={{ $capiDriverVersion }}"
+              PYTHONPATH=/opt/magnum-capi-driver python3 -c "import importlib.metadata as m; eps=[ep.name for ep in m.entry_points(group='magnum.drivers')]; assert any('capi' in ep and 'helm' in ep for ep in eps), f'CAPI Helm Magnum driver entry point missing: {eps}'; print('magnum-capi-helm {{ $capiDriverVersion }} ready:', eps)"
+              HELM_VERSION="{{ $helmVersion }}" HELM_SHA="{{ $helmSha }}" python3 - <<'PY'
+              import hashlib, os, pathlib, tarfile, urllib.request
+              version = os.environ['HELM_VERSION']
+              expected = os.environ['HELM_SHA']
+              url = f'https://get.helm.sh/helm-v{version}-linux-amd64.tar.gz'
+              archive = '/tmp/helm.tar.gz'
+              urllib.request.urlretrieve(url, archive)
+              digest = hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest()
+              if digest != expected:
+                  raise SystemExit(f'Helm checksum mismatch: {digest} != {expected}')
+              with tarfile.open(archive, 'r:gz') as tf:
+                  member = tf.getmember('linux-amd64/helm')
+                  src = tf.extractfile(member)
+                  out = pathlib.Path('/opt/helm/bin/helm')
+                  out.parent.mkdir(parents=True, exist_ok=True)
+                  out.write_bytes(src.read())
+                  out.chmod(0o755)
+              print(f'Helm {version} ready: {digest}')
+              PY
+              /opt/helm/bin/helm version --short
+          volumeMounts:
+            - name: magnum-capi-driver
+              mountPath: /opt/magnum-capi-driver
+            - name: helm-bin
+              mountPath: /opt/helm/bin
+{{- end }}
 {{ tuple $envAll "conductor" $mounts_magnum_conductor_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
         - name: magnum-conductor-init
 {{ tuple $envAll "magnum_conductor" | include "helm-toolkit.snippets.image" | indent 10 }}
@@ -81,6 +131,13 @@ spec:
 {{ tuple $envAll $envAll.Values.pod.resources.conductor | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             runAsUser: {{ .Values.pod.user.magnum.uid }}
+{{- if $capiBootstrapEnabled }}
+          env:
+            - name: PYTHONPATH
+              value: /opt/magnum-capi-driver
+            - name: PATH
+              value: /opt/helm/bin:/var/lib/openstack/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+{{- end }}
           command:
             - /tmp/magnum-conductor.sh
           volumeMounts:
@@ -118,6 +175,14 @@ spec:
               mountPath: /tmp/pod-shared
             - name: magnum-certificate-cache
               mountPath: {{ .Values.conf.magnum.cluster.temp_cache_dir }}
+{{- if $capiBootstrapEnabled }}
+            - name: magnum-capi-driver
+              mountPath: /opt/magnum-capi-driver
+              readOnly: true
+            - name: helm-bin
+              mountPath: /opt/helm/bin
+              readOnly: true
+{{- end }}
 {{ if $mounts_magnum_conductor.volumeMounts }}{{ toYaml $mounts_magnum_conductor.volumeMounts | indent 12 }}{{ end }}
       volumes:
         - name: pod-tmp
@@ -128,6 +193,12 @@ spec:
           emptyDir: {}
         - name: pod-shared
           emptyDir: {}
+{{- if $capiBootstrapEnabled }}
+        - name: magnum-capi-driver
+          emptyDir: {}
+        - name: helm-bin
+          emptyDir: {}
+{{- end }}
         - name: magnum-bin
           configMap:
             name: magnum-bin
