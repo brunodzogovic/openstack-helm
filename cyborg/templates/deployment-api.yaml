@@ -43,6 +43,7 @@ spec:
 {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" | indent 8 }}
         configmap-bin-hash: {{ tuple "configmap-bin.yaml" . | include "helm-toolkit.utils.hash" }}
         configmap-etc-hash: {{ tuple "configmap-etc.yaml" . | include "helm-toolkit.utils.hash" }}
+        configmap-api-uwsgi-hash: {{ tuple "configmap-api-uwsgi.yaml" . | include "helm-toolkit.utils.hash" }}
 {{ tuple "cyborg_api" . | include "helm-toolkit.snippets.custom_pod_annotations" | indent 8 }}
 {{ dict "envAll" $envAll "podName" "cyborg-api" "containerNames" (list "cyborg" "init") | include "helm-toolkit.snippets.kubernetes_mandatory_access_control_annotation" | indent 8 }}
     spec:
@@ -61,20 +62,20 @@ spec:
 {{ tuple $envAll $envAll.Values.pod.resources.api | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
 {{ dict "envAll" $envAll "application" "cyborg" "container" "cyborg" | include "helm-toolkit.snippets.kubernetes_container_security_context" | indent 10 }}
           env:
-          - name: HOST_IP
-            valueFrom:
-              fieldRef:
-                apiVersion: v1
-                fieldPath: status.hostIP
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.hostIP
+          # Cyborg 2026.1 removed eventlet and the legacy oslo.service WSGI
+          # server is intentionally incompatible with the threading backend.
+          # Run the supported module-based WSGI application behind uWSGI.
           command:
-            - /tmp/cyborg-api.sh
-            - start
-          lifecycle:
-            preStop:
-              exec:
-                command:
-                  - /tmp/cyborg-api.sh
-                  - stop
+            - uwsgi
+            - --ini
+            - /etc/cyborg/cyborg-api-uwsgi.ini
+            - --pyargv
+            - "--config-file /etc/cyborg/cyborg.conf"
           ports:
             - name: cyborg-api
               containerPort: {{ tuple "accelerator" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
@@ -91,9 +92,9 @@ spec:
               mountPath: {{ .Values.conf.cyborg.oslo_concurrency.lock_path }}
             - name: pod-var-cyborg
               mountPath: /var/lib/cyborg
-            - name: cyborg-bin
-              mountPath: /tmp/cyborg-api.sh
-              subPath: cyborg-api.sh
+            - name: cyborg-api-uwsgi
+              mountPath: /etc/cyborg/cyborg-api-uwsgi.ini
+              subPath: cyborg-api-uwsgi.ini
               readOnly: true
             - name: cyborg-etc
               mountPath: /etc/cyborg/cyborg.conf
@@ -115,10 +116,10 @@ spec:
           emptyDir: {}
         - name: pod-var-cyborg
           emptyDir: {}
-        - name: cyborg-bin
+        - name: cyborg-api-uwsgi
           configMap:
-            name: cyborg-bin
-            defaultMode: 0555
+            name: cyborg-api-uwsgi
+            defaultMode: 0444
         - name: cyborg-etc
           secret:
             secretName: cyborg-etc
