@@ -24,8 +24,9 @@ metadata:
   name: cloudkitty-storage-init
   annotations:
     {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
-    "helm.sh/hook": "post-install,post-upgrade"
-    "helm.sh/hook-weight": "-4"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   template:
     metadata:
