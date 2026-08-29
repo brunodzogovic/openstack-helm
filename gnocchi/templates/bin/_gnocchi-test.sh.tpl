@@ -45,7 +45,11 @@ gnocchi measures show --aggregation min ${METRIC_UUID}
 echo "Test: delete metric"
 gnocchi metric delete ${METRIC_UUID}
 
-RESOURCE_UUID={{ uuidv4 }}
+# Generate the ephemeral test identity when the test actually runs, rather than
+# during Helm rendering. A template-time uuidv4 makes gnocchi-bin differ on every
+# Argo comparison and consequently rolls API/metricd configmap-bin hashes even
+# when no Gnocchi input changed.
+RESOURCE_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
 echo "Test: create resource type"
 gnocchi resource-type create --attribute name:string --attribute host:string test
