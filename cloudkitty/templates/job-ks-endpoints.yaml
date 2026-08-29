@@ -19,7 +19,7 @@ argocd.argoproj.io/sync-wave: "0"
 {{- end }}
 
 {{- if .Values.manifests.job_ks_endpoints }}
-{{- $ksServiceJob := dict "envAll" . "serviceName" "cloudkitty" "serviceTypes" ( tuple "rating" ) -}}
+{{- $ksServiceJob := dict "envAll" . "serviceName" "cloudkitty" "serviceTypes" ( tuple "rating" ) "endpointInterfaces" ( tuple "internal" ) -}}
 {{- $_ := set $ksServiceJob "jobAnnotations" (include "metadata.annotations.job.ks_endpoints" . | fromYaml ) }}
 {{ $ksServiceJob | include "helm-toolkit.manifests.job_ks_endpoints" }}
 {{- end }}
