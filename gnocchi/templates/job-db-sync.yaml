@@ -24,6 +24,10 @@ metadata:
   name: gnocchi-db-sync
   labels:
 {{ tuple $envAll "gnocchi" "db-sync" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   template:
     metadata:
