@@ -12,8 +12,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
+{{- define "metadata.annotations.job.db_init" }}
+argocd.argoproj.io/hook: Sync
+argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+argocd.argoproj.io/sync-wave: "0"
+{{- end }}
+
 {{- if .Values.manifests.job_db_init }}
 {{- $dbInitJob := dict "envAll" . "serviceName" "gnocchi" -}}
+{{- $_ := set $dbInitJob "jobAnnotations" (include "metadata.annotations.job.db_init" . | fromYaml ) }}
 {{- if .Values.pod.tolerations.gnocchi.enabled -}}
 {{- $_ := set $dbInitJob "tolerationsEnabled" true -}}
 {{- end -}}
