@@ -12,8 +12,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
+{{- define "metadata.annotations.job.ks_endpoints" }}
+argocd.argoproj.io/hook: Sync
+argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+argocd.argoproj.io/sync-wave: "0"
+{{- end }}
+
 {{- if .Values.manifests.job_ks_endpoints }}
 {{- $ksEndpointsJob := dict "envAll" . "serviceName" "gnocchi" "serviceTypes" ( tuple "metric" ) "endpointInterfaces" ( tuple "internal" ) -}}
+{{- $_ := set $ksEndpointsJob "jobAnnotations" (include "metadata.annotations.job.ks_endpoints" . | fromYaml ) }}
 {{- if .Values.pod.tolerations.gnocchi.enabled -}}
 {{- $_ := set $ksEndpointsJob "tolerationsEnabled" true -}}
 {{- end -}}
