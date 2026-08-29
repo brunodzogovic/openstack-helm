@@ -21,6 +21,7 @@ limitations under the License.
 {{- $envAll := index . "envAll" -}}
 {{- $serviceName := index . "serviceName" -}}
 {{- $serviceTypes := index . "serviceTypes" -}}
+{{- $endpointInterfaces := index . "endpointInterfaces" | default ( tuple "admin" "internal" "public" ) -}}
 {{- $jobAnnotations := index . "jobAnnotations" -}}
 {{- $jobLabels := index . "jobLabels" -}}
 {{- $nodeSelector := index . "nodeSelector" | default ( dict $envAll.Values.labels.job.node_selector_key $envAll.Values.labels.job.node_selector_value ) -}}
@@ -83,7 +84,7 @@ spec:
 {{ tuple $envAll "ks_endpoints" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
 {{- range $key1, $osServiceType := $serviceTypes }}
-{{- range $key2, $osServiceEndPoint := tuple "admin" "internal" "public" }}
+{{- range $key2, $osServiceEndPoint := $endpointInterfaces }}
         - name: {{ printf "%s-%s-%s" $osServiceType "ks-endpoints" $osServiceEndPoint | quote }}
           image: {{ $envAll.Values.images.tags.ks_endpoints }}
           imagePullPolicy: {{ $envAll.Values.images.pull_policy }}
