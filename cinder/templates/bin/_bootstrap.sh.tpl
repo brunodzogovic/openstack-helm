@@ -19,10 +19,7 @@ export HOME=/tmp
 
 {{- if .Values.bootstrap.enabled | default "echo 'Not Enabled'" }}
 
-  {{- /* Create volume types defined in Values.bootstrap */}}
-  {{- /* Types can only be created for backends defined in Values.conf */}}
   {{- $volumeTypes := .Values.bootstrap.volume_types }}
-  {{- /* Generating list of backends listed in .Values.conf.backends */}}
   {{- $backendsList := list}}
   {{- range $backend_name, $backend_properties := .Values.conf.backends }}
     {{- if and $backend_properties $backend_properties.volume_backend_name }}
@@ -33,8 +30,6 @@ export HOME=/tmp
   {{- range $name, $properties := $volumeTypes }}
     {{- if and $properties.volume_backend_name (has $properties.volume_backend_name $backendsList) }}
       {{- $access_type := $properties.access_type | default "public"}}
-      # Create a volume type if it doesn't exist.
-      # Assumption: the volume type name is unique.
       openstack volume type show {{ $name }} || \
       openstack volume type create \
         --{{ $access_type }} \
@@ -45,16 +40,6 @@ export HOME=/tmp
       {{- end }}
       {{ $name }}
 
-      {{/*
-        Reconcile volume-type metadata directly and idempotently. Extra specs
-        belong to the type object and can be updated without enumerating all
-        volumes using that type. Avoiding `openstack volume list --long` also
-        removes the bootstrap job's unnecessary dependency on Nova enrichment.
-
-        Cinder rejects an extra-spec write while a type is in use even when the
-        requested value is unchanged. Read the current properties once and only
-        issue a write for properties that genuinely differ from desired state.
-      */}}
       {{- if (eq $access_type "private") }}
       volumeTypeID=$(openstack volume type show {{ $name }} -f value -c id)
       cinder type-update --is-public false ${volumeTypeID}
@@ -71,11 +56,14 @@ export HOME=/tmp
       {{- end }}
       {{- end }}
 
+      # OSC renders the properties column as a Python-style dictionary, e.g.
+      # {'volume_backend_name': 'rbd1'}. Match that exact key/value pair before
+      # attempting a write because Cinder rejects extra-spec writes on in-use
+      # volume types even when the requested value is unchanged.
       current_properties=$(openstack volume type show {{ $name }} -f value -c properties)
       {{- range $key, $value := $properties }}
       {{- if and (ne $key "access_type") (ne $key "grant_access") (ne $key "encryption-provider") (ne $key "encryption-cipher") (ne $key "encryption-key-size") (ne $key "encryption-control-location") $value }}
-      desired_property="{{ $key }}='{{ $value }}'"
-      if [[ "${current_properties}" != *"${desired_property}"* ]]; then
+      if ! printf '%s\n' "${current_properties}" | grep -Fq "'{{ $key }}': '{{ $value }}'"; then
         openstack volume type set --property {{ $key }}={{ $value }} {{ $name }}
         current_properties=$(openstack volume type show {{ $name }} -f value -c properties)
       fi
@@ -84,7 +72,6 @@ export HOME=/tmp
     {{- end }}
   {{- end }}
 
-  {{- /* Create volumes defined in Values.conf.backends */}}
   {{- if .Values.bootstrap.bootstrap_conf_backends }}
     {{- range $name, $properties := .Values.conf.backends }}
       {{- if $properties }}
@@ -97,11 +84,9 @@ export HOME=/tmp
     {{- end }}
   {{- end }}
 
-  {{- /* Create and associate volume QoS if defined */}}
   {{- if .Values.bootstrap.volume_qos}}
     {{- range $qos_name, $qos_properties := .Values.bootstrap.volume_qos }}
       type_defined=true
-      {{- /* If the volume type to associate with is not defined, skip the qos */}}
       {{- range $qos_properties.associates }}
         if ! openstack volume type show {{ . }}; then
           type_defined=false
@@ -122,7 +107,6 @@ export HOME=/tmp
     {{- end }}
   {{- end }}
 
-{{- /* Check volume type and properties were added */}}
 openstack volume type list --long
 openstack volume qos list
 {{- end }}
