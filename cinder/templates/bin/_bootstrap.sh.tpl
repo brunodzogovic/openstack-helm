@@ -50,6 +50,10 @@ export HOME=/tmp
         belong to the type object and can be updated without enumerating all
         volumes using that type. Avoiding `openstack volume list --long` also
         removes the bootstrap job's unnecessary dependency on Nova enrichment.
+
+        Cinder rejects an extra-spec write while a type is in use even when the
+        requested value is unchanged. Read the current properties once and only
+        issue a write for properties that genuinely differ from desired state.
       */}}
       {{- if (eq $access_type "private") }}
       volumeTypeID=$(openstack volume type show {{ $name }} -f value -c id)
@@ -67,9 +71,14 @@ export HOME=/tmp
       {{- end }}
       {{- end }}
 
+      current_properties=$(openstack volume type show {{ $name }} -f value -c properties)
       {{- range $key, $value := $properties }}
       {{- if and (ne $key "access_type") (ne $key "grant_access") (ne $key "encryption-provider") (ne $key "encryption-cipher") (ne $key "encryption-key-size") (ne $key "encryption-control-location") $value }}
-      openstack volume type set --property {{ $key }}={{ $value }} {{ $name }}
+      desired_property="{{ $key }}='{{ $value }}'"
+      if [[ "${current_properties}" != *"${desired_property}"* ]]; then
+        openstack volume type set --property {{ $key }}={{ $value }} {{ $name }}
+        current_properties=$(openstack volume type show {{ $name }} -f value -c properties)
+      fi
       {{- end }}
       {{- end }}
     {{- end }}
