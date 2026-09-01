@@ -44,36 +44,34 @@ export HOME=/tmp
       {{- end }}
       {{- end }}
       {{ $name }}
+
       {{/*
-        We will try to set or update volume type properties.
-        To update properties, the volume type MUST NOT BE IN USE,
-        and projects and domains with access to the volume type
-        MUST EXIST, as well.
+        Reconcile volume-type metadata directly and idempotently. Extra specs
+        belong to the type object and can be updated without enumerating all
+        volumes using that type. Avoiding `openstack volume list --long` also
+        removes the bootstrap job's unnecessary dependency on Nova enrichment.
       */}}
-      is_in_use=$(openstack volume list --long --all-projects -c Type -f value | grep -E "^{{ $name }}\s*$" || true)
-      if [[ -z ${is_in_use} ]]; then
-        {{- if (eq $access_type "private") }}
-        volumeTypeID=$(openstack volume type show {{ $name }} -f value -c id)
-        cinder type-update --is-public false ${volumeTypeID}
-        {{- end }}
+      {{- if (eq $access_type "private") }}
+      volumeTypeID=$(openstack volume type show {{ $name }} -f value -c id)
+      cinder type-update --is-public false ${volumeTypeID}
+      {{- end }}
 
-        {{- if and $properties.grant_access (eq $access_type "private") }}
-        {{- range $domain, $domainProjects := $properties.grant_access }}
-        {{- range $project := $domainProjects }}
-        project_id=$(openstack project show --domain {{ $domain }} -c id -f value {{ $project }})
-        if [[ -z  $(openstack volume type show {{ $name }} -c access_project_ids -f value | grep ${project_id} || true) ]]; then
-          openstack volume type set --project-domain {{ $domain }} --project {{ $project }} {{ $name }}
-        fi
-        {{- end }}
-        {{- end }}
-        {{- end }}
-
-        {{- range $key, $value := $properties }}
-        {{- if and (ne $key "access_type") (ne $key "grant_access") (ne $key "encryption-provider") (ne $key "encryption-cipher") (ne $key "encryption-key-size") (ne $key "encryption-control-location") $value }}
-        openstack volume type set --property {{ $key }}={{ $value }} {{ $name }}
-        {{- end }}
-        {{- end }}
+      {{- if and $properties.grant_access (eq $access_type "private") }}
+      {{- range $domain, $domainProjects := $properties.grant_access }}
+      {{- range $project := $domainProjects }}
+      project_id=$(openstack project show --domain {{ $domain }} -c id -f value {{ $project }})
+      if [[ -z  $(openstack volume type show {{ $name }} -c access_project_ids -f value | grep ${project_id} || true) ]]; then
+        openstack volume type set --project-domain {{ $domain }} --project {{ $project }} {{ $name }}
       fi
+      {{- end }}
+      {{- end }}
+      {{- end }}
+
+      {{- range $key, $value := $properties }}
+      {{- if and (ne $key "access_type") (ne $key "grant_access") (ne $key "encryption-provider") (ne $key "encryption-cipher") (ne $key "encryption-key-size") (ne $key "encryption-control-location") $value }}
+      openstack volume type set --property {{ $key }}={{ $value }} {{ $name }}
+      {{- end }}
+      {{- end }}
     {{- end }}
   {{- end }}
 
