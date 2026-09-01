@@ -14,6 +14,7 @@ limitations under the License.
 
 {{- if .Values.manifests.deployment_api }}
 {{- $envAll := . }}
+{{- $capiDriverBootstrap := .Values.conf.capi_driver_bootstrap | default dict }}
 
 {{- $mounts_magnum_api := .Values.pod.mounts.magnum_api.magnum_api }}
 {{- $mounts_magnum_api_init := .Values.pod.mounts.magnum_api.init_container }}
@@ -55,12 +56,101 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.api.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "api" $mounts_magnum_api_init | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
+{{- if $capiDriverBootstrap.enabled }}
+        - name: magnum-capi-driver-bootstrap
+{{ tuple $envAll "capi_driver_bootstrap" | include "helm-toolkit.snippets.image" | indent 10 }}
+          env:
+            - name: DRIVER_VERSION
+              value: {{ required "conf.capi_driver_bootstrap.version is required when enabled" $capiDriverBootstrap.version | quote }}
+            - name: DRIVER_SHA256
+              value: {{ $capiDriverBootstrap.driver_wheel_sha256 | default "1e0878ea39dbe6ea3d40674c0c443ee5a0494835bdfbcc4f8052bc1178f508b9" | quote }}
+            - name: HELM_VERSION
+              value: {{ required "conf.capi_driver_bootstrap.helm_version is required when enabled" $capiDriverBootstrap.helm_version | quote }}
+            - name: HELM_SHA256
+              value: {{ required "conf.capi_driver_bootstrap.helm_linux_amd64_sha256 is required when enabled" $capiDriverBootstrap.helm_linux_amd64_sha256 | quote }}
+          command:
+            - python3
+            - -c
+            - |
+              import hashlib
+              import os
+              import pathlib
+              import subprocess
+              import sys
+              import tarfile
+              import tempfile
+              import urllib.request
+
+              runtime = pathlib.Path("/runtime")
+              python_target = runtime / "python"
+              bin_target = runtime / "bin"
+              python_target.mkdir(parents=True, exist_ok=True)
+              bin_target.mkdir(parents=True, exist_ok=True)
+
+              driver_version = os.environ["DRIVER_VERSION"]
+              driver_sha256 = os.environ["DRIVER_SHA256"].lower()
+              with tempfile.TemporaryDirectory() as tmpdir:
+                  subprocess.check_call([
+                      sys.executable, "-m", "pip", "download",
+                      "--disable-pip-version-check", "--no-deps",
+                      "--only-binary=:all:", "--dest", tmpdir,
+                      f"magnum-capi-helm=={driver_version}",
+                  ])
+                  wheels = list(pathlib.Path(tmpdir).glob("magnum_capi_helm-*.whl"))
+                  if len(wheels) != 1:
+                      raise SystemExit(f"expected one magnum-capi-helm wheel, found {len(wheels)}")
+                  wheel = wheels[0]
+                  digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                  if digest != driver_sha256:
+                      raise SystemExit(
+                          f"magnum-capi-helm wheel sha256 mismatch: {digest} != {driver_sha256}"
+                      )
+                  subprocess.check_call([
+                      sys.executable, "-m", "pip", "install",
+                      "--disable-pip-version-check", "--no-deps", "--no-index",
+                      "--target", str(python_target), str(wheel),
+                  ])
+
+              helm_version = os.environ["HELM_VERSION"]
+              helm_sha256 = os.environ["HELM_SHA256"].lower()
+              helm_url = f"https://get.helm.sh/helm-v{helm_version}-linux-amd64.tar.gz"
+              with tempfile.TemporaryDirectory() as tmpdir:
+                  archive = pathlib.Path(tmpdir) / "helm.tar.gz"
+                  urllib.request.urlretrieve(helm_url, archive)
+                  digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                  if digest != helm_sha256:
+                      raise SystemExit(f"helm sha256 mismatch: {digest} != {helm_sha256}")
+                  with tarfile.open(archive, "r:gz") as tar:
+                      member = tar.getmember("linux-amd64/helm")
+                      source = tar.extractfile(member)
+                      if source is None:
+                          raise SystemExit("helm binary missing from archive")
+                      helm = bin_target / "helm"
+                      helm.write_bytes(source.read())
+                      helm.chmod(0o755)
+          volumeMounts:
+            - name: capi-driver-runtime
+              mountPath: /runtime
+{{- end }}
       containers:
         - name: magnum-api
 {{ tuple $envAll "magnum_api" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.api | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             runAsUser: {{ .Values.pod.user.magnum.uid }}
+{{- if $capiDriverBootstrap.enabled }}
+          env:
+            - name: PYTHONPATH
+              value: /opt/magnum-capi-driver/python
+            - name: PATH
+              value: /opt/magnum-capi-driver/bin:/var/lib/openstack/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            - name: HELM_CACHE_HOME
+              value: /tmp/helm/cache
+            - name: HELM_CONFIG_HOME
+              value: /tmp/helm/config
+            - name: HELM_DATA_HOME
+              value: /tmp/helm/data
+{{- end }}
           command:
             - uwsgi
             - --ini
@@ -112,6 +202,11 @@ spec:
               subPath: kubeconfig.conf
               readOnly: true
             {{- end }}
+{{- if $capiDriverBootstrap.enabled }}
+            - name: capi-driver-runtime
+              mountPath: /opt/magnum-capi-driver
+              readOnly: true
+{{- end }}
 {{ if $mounts_magnum_api.volumeMounts }}{{ toYaml $mounts_magnum_api.volumeMounts | indent 12 }}{{ end }}
       volumes:
         - name: pod-tmp
@@ -130,5 +225,9 @@ spec:
           secret:
             secretName: magnum-etc
             defaultMode: 0444
+{{- if $capiDriverBootstrap.enabled }}
+        - name: capi-driver-runtime
+          emptyDir: {}
+{{- end }}
 {{ if $mounts_magnum_api.volumes }}{{ toYaml $mounts_magnum_api.volumes | indent 8 }}{{ end }}
 {{- end }}
