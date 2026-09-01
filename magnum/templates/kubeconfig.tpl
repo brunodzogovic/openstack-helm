@@ -6,11 +6,11 @@ clusters:
 - name: {{ .Values.conf.capi.clusterName }}
   cluster:
     server: {{ .Values.conf.capi.apiServer }}
-{{- if $serviceAccountAuth }}
+{{ if $serviceAccountAuth }}
     certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-{{- else }}
+{{ else }}
     certificate-authority-data: {{ .Values.conf.capi.certificateAuthorityData | quote }}
-{{- end }}
+{{ end }}
 contexts:
 - name: {{ .Values.conf.capi.contextName }}
   context:
@@ -20,10 +20,10 @@ current-context: {{ .Values.conf.capi.contextName }}
 users:
 - name: {{ .Values.conf.capi.userName }}
   user:
-{{- if $serviceAccountAuth }}
+{{ if $serviceAccountAuth }}
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-{{- else }}
+{{ else }}
     client-certificate-data: {{ .Values.conf.capi.clientCertificateData | quote }}
     client-key-data: {{ .Values.conf.capi.clientKeyData | quote }}
-{{- end }}
+{{ end }}
 {{- end }}
