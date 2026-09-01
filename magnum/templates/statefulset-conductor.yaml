@@ -131,6 +131,75 @@ spec:
                       "--target", str(python_target), str(wheel),
                   ])
 
+              # magnum-capi-helm 1.4.0 understands literal kubeconfig tokens,
+              # but not tokenFile. Eclipse uses projected ServiceAccount tokens
+              # so credentials rotate without storing a long-lived token in Git.
+              # Patch the staged driver only, fail closed if upstream changes.
+              kubernetes_py = python_target / "magnum_capi_helm" / "kubernetes.py"
+              source = kubernetes_py.read_text()
+              patches = [
+                  (
+                      "token state",
+                      '''        self._tempfiles = []
+        cluster, user = self._get_cluster_and_user(kubeconfig)
+''',
+                      '''        self._tempfiles = []
+        self._token_file = None
+        cluster, user = self._get_cluster_and_user(kubeconfig)
+''',
+                  ),
+                  (
+                      "tokenFile auth",
+                      '''        if client_cert and client_key:
+            self.cert = (client_cert, client_key)
+        elif user.get("token"):
+            self.headers.update({"Authorization": f"Bearer {user['token']}"})
+        else:
+            raise Exception(
+                "No supported authentication method found in kubeconfig"
+            )
+''',
+                      '''        if client_cert and client_key:
+            self.cert = (client_cert, client_key)
+        elif user.get("token"):
+            self.headers.update({"Authorization": f"Bearer {user['token']}"})
+        elif user.get("tokenFile"):
+            self._token_file = user["tokenFile"]
+            self._refresh_token()
+        else:
+            raise Exception(
+                "No supported authentication method found in kubeconfig"
+            )
+''',
+                  ),
+                  (
+                      "token refresh",
+                      '''    def request(self, method, url, *args, **kwargs):
+        # Make sure to add the server to any relative URLs
+''',
+                      '''    def _refresh_token(self):
+        if not self._token_file:
+            return
+        with open(self._token_file) as fd:
+            token = fd.read().strip()
+        if not token:
+            raise Exception("ServiceAccount tokenFile is empty")
+        self.headers.update({"Authorization": f"Bearer {token}"})
+
+    def request(self, method, url, *args, **kwargs):
+        self._refresh_token()
+        # Make sure to add the server to any relative URLs
+''',
+                  ),
+              ]
+              for label, old, new in patches:
+                  if source.count(old) != 1:
+                      raise SystemExit(
+                          f"magnum-capi-helm tokenFile compatibility patch failed at {label}"
+                      )
+                  source = source.replace(old, new)
+              kubernetes_py.write_text(source)
+
               helm_version = os.environ["HELM_VERSION"]
               helm_sha256 = os.environ["HELM_SHA256"].lower()
               helm_url = f"https://get.helm.sh/helm-v{helm_version}-linux-amd64.tar.gz"
